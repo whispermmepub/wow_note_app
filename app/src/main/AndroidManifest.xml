@@ -8,6 +8,8 @@
     <application
         android:allowBackup="true"
         android:fullBackupContent="true"
+        android:icon="@drawable/ic_wow_note"
+        android:roundIcon="@drawable/ic_wow_note"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.WoWNote">
