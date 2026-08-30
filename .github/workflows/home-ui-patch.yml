@@ -1,0 +1,30 @@
+name: Apply Home UI Patch
+
+on:
+  push:
+    paths:
+      - scripts/apply_home_ui.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply home UI patch
+        run: python scripts/apply_home_ui.py
+      - name: Commit patched home UI
+        run: |
+          if git diff --quiet; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git config user.name "WoW Note Builder"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/src/main/java/com/whispermmepub/wownote/WoWNoteApp.kt
+          git commit -m "Add Card List Grid and social home styles"
+          git push origin main
