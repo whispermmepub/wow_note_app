@@ -68,11 +68,8 @@ fun FloatingPressable(
             .shadow(animatedElevation, shape, clip = false)
             .clip(shape)
             .background(backgroundColor)
-            .clickable(
-                interactionSource = interaction,
-                indication = null
-            ) {
-                if (haptics) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            .clickable(interactionSource = interaction, indication = null) {
+                if (haptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()
             },
         content = content
@@ -100,7 +97,7 @@ fun FloatingCircleButton(
             .clip(CircleShape)
             .background(backgroundColor)
             .clickable(interactionSource = interaction, indication = null) {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 onClick()
             },
         content = content
