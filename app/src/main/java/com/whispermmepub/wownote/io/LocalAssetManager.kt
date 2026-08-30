@@ -1,6 +1,7 @@
 package com.whispermmepub.wownote.io
 
 import android.content.Context
+import android.graphics.Typeface
 import android.net.Uri
 import android.provider.OpenableColumns
 import java.io.File
@@ -18,7 +19,11 @@ object LocalAssetManager {
         val out = File(dir, "${UUID.randomUUID()}.$ext")
         context.contentResolver.openInputStream(uri).use { input ->
             requireNotNull(input) { "Unable to open font" }
-            out.outputStream().use(input::copyTo)
+            out.outputStream().use { output -> input.copyTo(output) }
+        }
+        runCatching { Typeface.createFromFile(out) }.getOrElse {
+            out.delete()
+            throw IllegalArgumentException("Invalid font file", it)
         }
         return ImportedAsset(out.absolutePath, name.substringBeforeLast('.'))
     }
@@ -32,7 +37,7 @@ object LocalAssetManager {
         val out = File(dir, "${UUID.randomUUID()}.$ext")
         context.contentResolver.openInputStream(uri).use { input ->
             requireNotNull(input) { "Unable to open image" }
-            out.outputStream().use(input::copyTo)
+            out.outputStream().use { output -> input.copyTo(output) }
         }
         return ImportedAsset(out.absolutePath, name)
     }
