@@ -28,7 +28,7 @@ class RichEditText(context: Context) : EditText(context) {
     private val gestures = GestureDetector(
         context,
         object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean = false
+            override fun onDown(e: MotionEvent): Boolean = true
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 suppressNextAutoFocus = false
