@@ -40,16 +40,10 @@ class RichEditText(context: Context) : EditText(context) {
 
     fun loadRichText(json: String, fallback: String, sizeSp: Float, fontPath: String?) {
         textSize = sizeSp
-        if (!fontPath.isNullOrBlank()) {
-            runCatching { typeface = Typeface.createFromFile(File(fontPath)) }
-        } else {
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
-        }
-        if (editableText.toString() != fallback || json.isNotBlank()) {
-            val restored = RichTextCodec.decode(json, fallback)
-            setText(restored)
-            setSelection(restored.length)
-        }
+        setNoteTypeface(fontPath)
+        val restored = RichTextCodec.decode(json, fallback)
+        setText(restored)
+        setSelection(restored.length)
     }
 
     fun setNoteTypeface(fontPath: String?) {
@@ -59,6 +53,33 @@ class RichEditText(context: Context) : EditText(context) {
             runCatching { Typeface.createFromFile(File(fontPath)) }
                 .getOrElse { Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL) }
         }
+    }
+
+    fun selectedText(): String {
+        val start = minOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
+        val end = maxOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
+        return if (end > start) editableText.substring(start, end) else ""
+    }
+
+    fun insertAtCursor(value: String) {
+        val start = minOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
+        val end = maxOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
+        editableText.replace(start, end, value)
+        setSelection((start + value.length).coerceAtMost(editableText.length))
+        emitChange()
+    }
+
+    fun replaceSelectionOrAll(value: String) {
+        val start = minOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
+        val end = maxOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
+        if (end > start) {
+            editableText.replace(start, end, value)
+            setSelection((start + value.length).coerceAtMost(editableText.length))
+        } else {
+            setText(value)
+            setSelection(value.length)
+        }
+        emitChange()
     }
 
     fun toggleBold() = toggleStyle(Typeface.BOLD)
@@ -128,9 +149,10 @@ class RichEditText(context: Context) : EditText(context) {
     }
 
     private fun selectedOrWordRange(): Pair<Int, Int> {
-        var start = selectionStart.coerceAtLeast(0)
-        var end = selectionEnd.coerceAtLeast(0)
-        if (start > end) start = end.also { end = start }
+        val rawStart = selectionStart.coerceAtLeast(0)
+        val rawEnd = selectionEnd.coerceAtLeast(0)
+        val start = minOf(rawStart, rawEnd)
+        val end = maxOf(rawStart, rawEnd)
         if (start != end) return start to end
 
         val text = editableText
