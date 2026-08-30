@@ -30,6 +30,10 @@ data class Note(
     val customFontPath: String? = null,
     val customFontName: String? = null,
     val defaultFontSizeSp: Float = 18f,
+    /** Local epoch millis for a user-facing reminder. */
+    val reminderAt: Long? = null,
+    /** Optional original page when the note was captured from the web/share sheet. */
+    val sourceUrl: String? = null,
     val pinned: Boolean = false,
     val archived: Boolean = false,
     val deleted: Boolean = false,
