@@ -10,7 +10,9 @@ import android.text.style.AbsoluteSizeSpan
 import android.text.style.AlignmentSpan
 import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import androidx.core.content.getSystemService
@@ -20,6 +22,21 @@ import java.io.File
 class RichEditText(context: Context) : EditText(context) {
 
     var onRichTextChanged: ((plain: String, richJson: String) -> Unit)? = null
+    private var editMode = false
+
+    private val gestures = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = false
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                enterEditMode(showKeyboard = true)
+                val offset = getOffsetForPosition(e.x, e.y).coerceIn(0, editableText.length)
+                setSelection(offset)
+                return true
+            }
+        }
+    )
 
     init {
         setTextColor(Color.rgb(20, 20, 22))
@@ -32,18 +49,30 @@ class RichEditText(context: Context) : EditText(context) {
         textSize = 18f
         hint = "Start writing…"
         isVerticalScrollBarEnabled = false
+
         doAfterTextChanged {
+            if (!editMode) return@doAfterTextChanged
             val e = editableText ?: return@doAfterTextChanged
             onRichTextChanged?.invoke(e.toString(), RichTextCodec.encode(e))
         }
+
+        enterReadMode()
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (!editMode) gestures.onTouchEvent(event)
+        return super.onTouchEvent(event)
     }
 
     fun loadRichText(json: String, fallback: String, sizeSp: Float, fontPath: String?) {
+        val restoreEditing = editMode
+        editMode = false
         textSize = sizeSp
         setNoteTypeface(fontPath)
         val restored = RichTextCodec.decode(json, fallback)
         setText(restored)
         setSelection(restored.length)
+        if (restoreEditing) enterEditMode(showKeyboard = false) else enterReadMode()
     }
 
     fun setNoteTypeface(fontPath: String?) {
@@ -62,6 +91,7 @@ class RichEditText(context: Context) : EditText(context) {
     }
 
     fun insertAtCursor(value: String) {
+        enterEditMode(showKeyboard = false)
         val start = minOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
         val end = maxOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
         editableText.replace(start, end, value)
@@ -70,6 +100,7 @@ class RichEditText(context: Context) : EditText(context) {
     }
 
     fun replaceSelectionOrAll(value: String) {
+        enterEditMode(showKeyboard = false)
         val start = minOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
         val end = maxOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
         if (end > start) {
@@ -82,10 +113,18 @@ class RichEditText(context: Context) : EditText(context) {
         emitChange()
     }
 
-    fun toggleBold() = toggleStyle(Typeface.BOLD)
-    fun toggleItalic() = toggleStyle(Typeface.ITALIC)
+    fun toggleBold() {
+        enterEditMode(false)
+        toggleStyle(Typeface.BOLD)
+    }
+
+    fun toggleItalic() {
+        enterEditMode(false)
+        toggleStyle(Typeface.ITALIC)
+    }
 
     fun toggleUnderline() {
+        enterEditMode(false)
         val (start, end) = selectedOrWordRange()
         if (end <= start) return
         val spans = editableText.getSpans(start, end, UnderlineSpan::class.java)
@@ -95,6 +134,7 @@ class RichEditText(context: Context) : EditText(context) {
     }
 
     fun setSelectionSizeSp(sizeSp: Int) {
+        enterEditMode(false)
         val (start, end) = selectedOrWordRange()
         if (end <= start) {
             textSize = sizeSp.toFloat()
@@ -110,11 +150,46 @@ class RichEditText(context: Context) : EditText(context) {
         emitChange()
     }
 
-    fun alignLeft() = setParagraphAlignment(Layout.Alignment.ALIGN_NORMAL)
-    fun alignCenter() = setParagraphAlignment(Layout.Alignment.ALIGN_CENTER)
-    fun alignRight() = setParagraphAlignment(Layout.Alignment.ALIGN_OPPOSITE)
+    fun alignLeft() {
+        enterEditMode(false)
+        setParagraphAlignment(Layout.Alignment.ALIGN_NORMAL)
+    }
+
+    fun alignCenter() {
+        enterEditMode(false)
+        setParagraphAlignment(Layout.Alignment.ALIGN_CENTER)
+    }
+
+    fun alignRight() {
+        enterEditMode(false)
+        setParagraphAlignment(Layout.Alignment.ALIGN_OPPOSITE)
+    }
+
+    fun enterReadMode() {
+        editMode = false
+        isCursorVisible = false
+        isFocusable = false
+        isFocusableInTouchMode = false
+        showSoftInputOnFocus = false
+        clearFocus()
+        context.getSystemService<InputMethodManager>()?.hideSoftInputFromWindow(windowToken, 0)
+    }
+
+    fun enterEditMode(showKeyboard: Boolean = true) {
+        editMode = true
+        isFocusable = true
+        isFocusableInTouchMode = true
+        isCursorVisible = true
+        showSoftInputOnFocus = true
+        if (showKeyboard) focusAndShowKeyboard()
+    }
 
     fun focusAndShowKeyboard() {
+        editMode = true
+        isFocusable = true
+        isFocusableInTouchMode = true
+        isCursorVisible = true
+        showSoftInputOnFocus = true
         requestFocus()
         post {
             context.getSystemService<InputMethodManager>()
