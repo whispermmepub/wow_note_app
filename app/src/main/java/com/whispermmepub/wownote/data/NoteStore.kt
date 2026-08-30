@@ -2,6 +2,7 @@ package com.whispermmepub.wownote.data
 
 import android.content.ContentValues
 import android.content.Context
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.whispermmepub.wownote.model.Note
@@ -10,10 +11,7 @@ import com.whispermmepub.wownote.model.NoteBackgroundType
 import com.whispermmepub.wownote.model.NoteType
 import org.json.JSONObject
 
-/**
- * Lightweight local-first store. SQLite keeps note count independent from
- * SharedPreferences size limits and works fully offline.
- */
+/** Local-first SQLite note store. */
 class NoteStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -30,6 +28,8 @@ class NoteStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_
                 custom_font_path TEXT,
                 custom_font_name TEXT,
                 default_font_size REAL NOT NULL,
+                reminder_at INTEGER,
+                source_url TEXT,
                 pinned INTEGER NOT NULL,
                 archived INTEGER NOT NULL,
                 deleted INTEGER NOT NULL,
@@ -40,6 +40,7 @@ class NoteStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_
         )
         db.execSQL("CREATE INDEX idx_notes_updated ON notes(updated_at DESC)")
         db.execSQL("CREATE INDEX idx_notes_state ON notes(deleted, archived, pinned)")
+        db.execSQL("CREATE INDEX idx_notes_reminder ON notes(reminder_at)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -49,40 +50,27 @@ class NoteStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_
             runCatching { db.execSQL("ALTER TABLE notes ADD COLUMN custom_font_name TEXT") }
             runCatching { db.execSQL("ALTER TABLE notes ADD COLUMN default_font_size REAL NOT NULL DEFAULT 18") }
         }
+        if (oldVersion < 3) {
+            runCatching { db.execSQL("ALTER TABLE notes ADD COLUMN reminder_at INTEGER") }
+            runCatching { db.execSQL("ALTER TABLE notes ADD COLUMN source_url TEXT") }
+            runCatching { db.execSQL("CREATE INDEX idx_notes_reminder ON notes(reminder_at)") }
+        }
     }
 
     fun all(): List<Note> = readableDatabase.query(
         "notes", null, null, null, null, null,
         "pinned DESC, updated_at DESC"
-    ).use { cursor ->
-        buildList {
-            while (cursor.moveToNext()) {
-                add(
-                    Note(
-                        id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
-                        title = cursor.getString(cursor.getColumnIndexOrThrow("title")),
-                        content = cursor.getString(cursor.getColumnIndexOrThrow("content")),
-                        richTextJson = cursor.getString(cursor.getColumnIndexOrThrow("rich_text_json")),
-                        type = runCatching {
-                            NoteType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("type")))
-                        }.getOrDefault(NoteType.TEXT),
-                        colorArgb = cursor.getLong(cursor.getColumnIndexOrThrow("color_argb")),
-                        background = decodeBackground(cursor.getString(cursor.getColumnIndexOrThrow("background_json"))),
-                        customFontPath = cursor.getString(cursor.getColumnIndexOrThrow("custom_font_path")),
-                        customFontName = cursor.getString(cursor.getColumnIndexOrThrow("custom_font_name")),
-                        defaultFontSizeSp = cursor.getFloat(cursor.getColumnIndexOrThrow("default_font_size")),
-                        pinned = cursor.getInt(cursor.getColumnIndexOrThrow("pinned")) == 1,
-                        archived = cursor.getInt(cursor.getColumnIndexOrThrow("archived")) == 1,
-                        deleted = cursor.getInt(cursor.getColumnIndexOrThrow("deleted")) == 1,
-                        createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
-                        updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at"))
-                    )
-                )
-            }
-        }
-    }
+    ).use(::readNotes)
 
-    fun get(id: String): Note? = all().firstOrNull { it.id == id }
+    fun get(id: String): Note? = readableDatabase.query(
+        "notes", null, "id = ?", arrayOf(id), null, null, null, "1"
+    ).use { readNotes(it).firstOrNull() }
+
+    fun dueReminders(afterMillis: Long = System.currentTimeMillis()): List<Note> = readableDatabase.query(
+        "notes", null,
+        "reminder_at IS NOT NULL AND reminder_at >= ? AND deleted = 0",
+        arrayOf(afterMillis.toString()), null, null, "reminder_at ASC"
+    ).use(::readNotes)
 
     fun upsert(note: Note) {
         writableDatabase.insertWithOnConflict(
@@ -99,6 +87,8 @@ class NoteStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_
                 put("custom_font_path", note.customFontPath)
                 put("custom_font_name", note.customFontName)
                 put("default_font_size", note.defaultFontSizeSp)
+                if (note.reminderAt == null) putNull("reminder_at") else put("reminder_at", note.reminderAt)
+                put("source_url", note.sourceUrl)
                 put("pinned", if (note.pinned) 1 else 0)
                 put("archived", if (note.archived) 1 else 0)
                 put("deleted", if (note.deleted) 1 else 0)
@@ -118,14 +108,38 @@ class NoteStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_
         val like = "%${query.trim()}%"
         return readableDatabase.query(
             "notes", null,
-            "(title LIKE ? OR content LIKE ?)",
-            arrayOf(like, like), null, null,
+            "(title LIKE ? OR content LIKE ? OR source_url LIKE ?)",
+            arrayOf(like, like, like), null, null,
             "pinned DESC, updated_at DESC"
-        ).use { cursor ->
-            val ids = mutableListOf<String>()
-            while (cursor.moveToNext()) ids += cursor.getString(cursor.getColumnIndexOrThrow("id"))
-            val map = all().associateBy { it.id }
-            ids.mapNotNull(map::get)
+        ).use(::readNotes)
+    }
+
+    private fun readNotes(cursor: Cursor): List<Note> = buildList {
+        while (cursor.moveToNext()) {
+            val reminderIndex = cursor.getColumnIndexOrThrow("reminder_at")
+            add(
+                Note(
+                    id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+                    title = cursor.getString(cursor.getColumnIndexOrThrow("title")),
+                    content = cursor.getString(cursor.getColumnIndexOrThrow("content")),
+                    richTextJson = cursor.getString(cursor.getColumnIndexOrThrow("rich_text_json")),
+                    type = runCatching {
+                        NoteType.valueOf(cursor.getString(cursor.getColumnIndexOrThrow("type")))
+                    }.getOrDefault(NoteType.TEXT),
+                    colorArgb = cursor.getLong(cursor.getColumnIndexOrThrow("color_argb")),
+                    background = decodeBackground(cursor.getString(cursor.getColumnIndexOrThrow("background_json"))),
+                    customFontPath = cursor.getString(cursor.getColumnIndexOrThrow("custom_font_path")),
+                    customFontName = cursor.getString(cursor.getColumnIndexOrThrow("custom_font_name")),
+                    defaultFontSizeSp = cursor.getFloat(cursor.getColumnIndexOrThrow("default_font_size")),
+                    reminderAt = if (cursor.isNull(reminderIndex)) null else cursor.getLong(reminderIndex),
+                    sourceUrl = cursor.getString(cursor.getColumnIndexOrThrow("source_url")),
+                    pinned = cursor.getInt(cursor.getColumnIndexOrThrow("pinned")) == 1,
+                    archived = cursor.getInt(cursor.getColumnIndexOrThrow("archived")) == 1,
+                    deleted = cursor.getInt(cursor.getColumnIndexOrThrow("deleted")) == 1,
+                    createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                    updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow("updated_at"))
+                )
+            )
         }
     }
 
@@ -155,6 +169,6 @@ class NoteStore(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_
 
     companion object {
         private const val DB_NAME = "wow_note.db"
-        private const val DB_VERSION = 2
+        private const val DB_VERSION = 3
     }
 }
