@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.speech.RecognizerIntent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -82,7 +84,8 @@ private enum class SocialStyle { CLEAN, PHOTO, FEED, MICRO }
 @Composable
 fun WoWNoteApp(
     launchRequest: LaunchRequest,
-    onLaunchConsumed: () -> Unit
+    onLaunchConsumed: () -> Unit,
+    onThemeClick: () -> Unit
 ) {
     val context = LocalContext.current
     val store = remember { NoteStore(context.applicationContext) }
@@ -158,6 +161,7 @@ fun WoWNoteApp(
                 notes = notes,
                 onOpen = { editingId = it.id },
                 onNew = { showCreate = true },
+                onThemeClick = onThemeClick,
                 onSave = ::save,
                 onDeleteForever = {
                     ReminderScheduler.cancel(context, it.id)
@@ -209,6 +213,7 @@ private fun NotesScreen(
     notes: List<Note>,
     onOpen: (Note) -> Unit,
     onNew: () -> Unit,
+    onThemeClick: () -> Unit,
     onSave: (Note) -> Unit,
     onDeleteForever: (Note) -> Unit
 ) {
@@ -260,7 +265,34 @@ private fun NotesScreen(
                 .padding(horizontal = 18.dp)
         ) {
             Spacer(Modifier.height(9.dp))
-            Text("WoW Note", fontSize = 34.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "WoW Note",
+                        fontSize = 34.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        "Your notes, your space",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.52f)
+                    )
+                }
+                FloatingCircleButton(
+                    onClick = onThemeClick,
+                    modifier = Modifier.size(42.dp),
+                    elevation = 8.dp,
+                    backgroundColor = MaterialTheme.colorScheme.surface
+                ) {
+                    Icon(
+                        Icons.Rounded.Palette,
+                        "App theme",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.align(Alignment.Center).size(20.dp)
+                    )
+                }
+            }
             Spacer(Modifier.height(13.dp))
             FloatingSurface(
                 modifier = Modifier.fillMaxWidth(),
@@ -654,13 +686,29 @@ private fun EditorScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     var draft by remember(original.id) { mutableStateOf(original) }
     var editor by remember(original.id) { mutableStateOf<RichEditText?>(null) }
+    var isEditing by remember(original.id) {
+        mutableStateOf(original.content.isBlank() || original.content == "[ ] ")
+    }
     var showSize by remember { mutableStateOf(false) }
     var showBackground by remember { mutableStateOf(false) }
     var showAi by remember { mutableStateOf(false) }
     var aiSelection by remember { mutableStateOf("") }
     var status by remember { mutableStateOf<String?>(null) }
+
+    fun leaveEditMode() {
+        isEditing = false
+        editor?.enterReadMode()
+        focusManager.clearFocus(force = true)
+    }
+
+    fun handleEditorBack() {
+        if (isEditing) leaveEditMode() else onBack()
+    }
+
+    BackHandler(enabled = true) { handleEditorBack() }
 
     fun saveChanged(next: Note) {
         val stamped = next.copy(updatedAt = System.currentTimeMillis())
@@ -710,6 +758,16 @@ private fun EditorScreen(
                 .onSuccess { status = "DOCX export ပြီးပြီ" }
                 .onFailure { status = "DOCX export မအောင်မြင်ပါ" }
         }
+    }
+
+    fun launchDocxExport() {
+        val safe = draft.title
+            .ifBlank { "WoW-Note" }
+            .replace(Regex("[^A-Za-z0-9က-အ]+"), "-")
+            .trim('-')
+            .take(50)
+            .ifBlank { "WoW-Note" }
+        docxExport.launch("$safe.docx")
     }
 
     val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -776,40 +834,95 @@ private fun EditorScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .imePadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 15.dp)
         ) {
             Spacer(Modifier.height(7.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 FloatingCircleButton(
-                    onClick = onBack,
-                    modifier = Modifier.size(42.dp),
-                    elevation = 10.dp
+                    onClick = { handleEditorBack() },
+                    modifier = Modifier.size(40.dp),
+                    elevation = 8.dp,
+                    backgroundColor = MaterialTheme.colorScheme.surface
                 ) {
-                    Icon(Icons.Rounded.ArrowBack, "Back", modifier = Modifier.align(Alignment.Center).size(21.dp))
+                    Icon(
+                        Icons.Rounded.ArrowBack,
+                        "Back",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.align(Alignment.Center).size(20.dp)
+                    )
                 }
-                Spacer(Modifier.width(11.dp))
-                BasicTextField(
-                    value = draft.title,
-                    onValueChange = { saveChanged(draft.copy(title = it)) },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                    textStyle = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF171719)),
-                    decorationBox = { inner ->
-                        Box {
-                            if (draft.title.isBlank()) Text("Title", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF8E8E93))
-                            inner()
+                Spacer(Modifier.width(10.dp))
+                if (isEditing) {
+                    BasicTextField(
+                        value = draft.title,
+                        onValueChange = { saveChanged(draft.copy(title = it)) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        textStyle = TextStyle(
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        decorationBox = { inner ->
+                            Box {
+                                if (draft.title.isBlank()) {
+                                    Text(
+                                        "Title",
+                                        fontSize = 21.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                                    )
+                                }
+                                inner()
+                            }
                         }
-                    }
-                )
+                    )
+                } else {
+                    Text(
+                        draft.title.ifBlank { if (draft.type == NoteType.CHECKLIST) "Checklist" else "Untitled" },
+                        modifier = Modifier.weight(1f),
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Spacer(Modifier.width(7.dp))
                 FloatingCircleButton(
                     onClick = {
-                        val safe = draft.title.ifBlank { "WoW-Note" }.replace(Regex("[^A-Za-z0-9က-အ]+"), "-").take(50)
-                        docxExport.launch("$safe.docx")
+                        if (isEditing) {
+                            leaveEditMode()
+                        } else {
+                            isEditing = true
+                            editor?.beginEditingAtVisiblePosition()
+                        }
                     },
-                    modifier = Modifier.size(42.dp),
-                    elevation = 10.dp
+                    modifier = Modifier.size(40.dp),
+                    elevation = 8.dp,
+                    backgroundColor = if (isEditing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
                 ) {
-                    Icon(Icons.Rounded.FileDownload, "Export DOCX", modifier = Modifier.align(Alignment.Center).size(20.dp))
+                    Icon(
+                        if (isEditing) Icons.Rounded.Check else Icons.Rounded.Edit,
+                        if (isEditing) "Done editing" else "Edit note",
+                        tint = if (isEditing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.align(Alignment.Center).size(19.dp)
+                    )
+                }
+                Spacer(Modifier.width(7.dp))
+                FloatingCircleButton(
+                    onClick = { launchDocxExport() },
+                    modifier = Modifier.size(40.dp),
+                    elevation = 8.dp,
+                    backgroundColor = MaterialTheme.colorScheme.surface
+                ) {
+                    Icon(
+                        Icons.Rounded.FileDownload,
+                        "Export DOCX",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.align(Alignment.Center).size(19.dp)
+                    )
                 }
             }
 
@@ -845,7 +958,9 @@ private fun EditorScreen(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 cornerRadius = 26.dp,
                 elevation = 13.dp,
-                backgroundColor = Color.White.copy(alpha = if (draft.background.type == NoteBackgroundType.IMAGE) 0.82f else 0.93f),
+                backgroundColor = MaterialTheme.colorScheme.surface.copy(
+                    alpha = if (draft.background.type == NoteBackgroundType.IMAGE) 0.84f else 0.96f
+                ),
                 contentPadding = PaddingValues(18.dp)
             ) {
                 AndroidView(
@@ -853,54 +968,70 @@ private fun EditorScreen(
                     factory = { ctx ->
                         RichEditText(ctx).also { view ->
                             editor = view
-                            view.loadRichText(draft.richTextJson, draft.content, draft.defaultFontSizeSp, draft.customFontPath)
+                            view.loadRichText(
+                                draft.richTextJson,
+                                draft.content,
+                                draft.defaultFontSizeSp,
+                                draft.customFontPath
+                            )
                             view.onRichTextChanged = { plain, rich ->
-                                val next = draft.copy(content = plain, richTextJson = rich, updatedAt = System.currentTimeMillis())
+                                val next = draft.copy(
+                                    content = plain,
+                                    richTextJson = rich,
+                                    updatedAt = System.currentTimeMillis()
+                                )
                                 draft = next
                                 onSave(next)
                             }
-                            view.focusAndShowKeyboard()
+                            view.onEditModeChanged = { active -> isEditing = active }
+                            if (isEditing) {
+                                view.enterEditMode(showKeyboard = false)
+                                view.moveCursorToEnd()
+                                view.post { view.focusAndShowKeyboard() }
+                            }
                         }
                     },
                     update = { view ->
                         editor = view
                         view.setNoteTypeface(draft.customFontPath)
+                        if (!isEditing && view.isEditing()) view.enterReadMode()
                     }
                 )
             }
             Spacer(Modifier.height(10.dp))
 
-            FloatingSurface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(bottom = 8.dp),
-                cornerRadius = 24.dp,
-                elevation = 18.dp,
-                backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 7.dp)
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            if (isEditing) {
+                FloatingSurface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    cornerRadius = 24.dp,
+                    elevation = 18.dp,
+                    backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 7.dp)
                 ) {
-                    ToolButton(Icons.Rounded.FormatBold, "Bold") { editor?.toggleBold() }
-                    ToolButton(Icons.Rounded.FormatItalic, "Italic") { editor?.toggleItalic() }
-                    ToolButton(Icons.Rounded.FormatUnderlined, "Underline") { editor?.toggleUnderline() }
-                    ToolButton(Icons.Rounded.TextFields, "Size") { showSize = true }
-                    ToolButton(Icons.Rounded.FormatAlignLeft, "Left") { editor?.alignLeft() }
-                    ToolButton(Icons.Rounded.FormatAlignCenter, "Center") { editor?.alignCenter() }
-                    ToolButton(Icons.Rounded.FormatAlignRight, "Right") { editor?.alignRight() }
-                    ToolButton(Icons.Rounded.FontDownload, "Font") {
-                        fontPicker.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-opentype"))
-                    }
-                    ToolButton(Icons.Rounded.Palette, "Background") { showBackground = true }
-                    ToolButton(Icons.Rounded.Mic, "Myanmar voice") { launchVoice() }
-                    ToolButton(Icons.Rounded.NotificationsActive, "Reminder") { pickReminder() }
-                    ToolButton(Icons.Rounded.AutoAwesome, "WoW AI") {
-                        aiSelection = editor?.selectedText().orEmpty()
-                        showAi = true
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ToolButton(Icons.Rounded.FormatBold, "Bold") { editor?.toggleBold() }
+                        ToolButton(Icons.Rounded.FormatItalic, "Italic") { editor?.toggleItalic() }
+                        ToolButton(Icons.Rounded.FormatUnderlined, "Underline") { editor?.toggleUnderline() }
+                        ToolButton(Icons.Rounded.TextFields, "Size") { showSize = true }
+                        ToolButton(Icons.Rounded.FormatAlignLeft, "Left") { editor?.alignLeft() }
+                        ToolButton(Icons.Rounded.FormatAlignCenter, "Center") { editor?.alignCenter() }
+                        ToolButton(Icons.Rounded.FormatAlignRight, "Right") { editor?.alignRight() }
+                        ToolButton(Icons.Rounded.FontDownload, "Font") {
+                            fontPicker.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-opentype"))
+                        }
+                        ToolButton(Icons.Rounded.Palette, "Background") { showBackground = true }
+                        ToolButton(Icons.Rounded.Mic, "Myanmar voice") { launchVoice() }
+                        ToolButton(Icons.Rounded.NotificationsActive, "Reminder") { pickReminder() }
+                        ToolButton(Icons.Rounded.AutoAwesome, "WoW AI") {
+                            aiSelection = editor?.selectedText().orEmpty()
+                            showAi = true
+                        }
                     }
                 }
             }
@@ -1139,7 +1270,9 @@ private fun CalendarScreen(notes: List<Note>, onOpenNote: (Note) -> Unit) {
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 13.dp)
+            .padding(bottom = 118.dp)
     ) {
         Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1181,7 +1314,7 @@ private fun CalendarScreen(notes: List<Note>, onOpenNote: (Note) -> Unit) {
                                 .clickable(enabled = dayNotes.isNotEmpty()) { onOpenNote(dayNotes.first()) },
                             cornerRadius = 13.dp,
                             elevation = if (isToday) 8.dp else 3.dp,
-                            backgroundColor = if (isToday) Color(0xFFE6F2FF) else Color.White.copy(alpha = 0.94f),
+                            backgroundColor = if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
                             contentPadding = PaddingValues(5.dp)
                         ) {
                             Column(Modifier.fillMaxSize()) {
@@ -1189,7 +1322,7 @@ private fun CalendarScreen(notes: List<Note>, onOpenNote: (Note) -> Unit) {
                                     date.dayOfMonth.toString(),
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isToday) Color(0xFF007AFF) else Color(0xFF171719)
+                                    color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                 )
                                 Text(info.monthName, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color(0xFF636366))
                                 Text(
@@ -1220,7 +1353,7 @@ private fun CalendarScreen(notes: List<Note>, onOpenNote: (Note) -> Unit) {
         val todayInfo = remember(today) { MyanmarCalendarUtil.info(today) }
         Spacer(Modifier.height(6.dp))
         FloatingSurface(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 92.dp),
+            modifier = Modifier.fillMaxWidth(),
             cornerRadius = 22.dp,
             elevation = 10.dp,
             backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),

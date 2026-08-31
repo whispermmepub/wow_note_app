@@ -91,15 +91,8 @@ class MainActivity : ComponentActivity() {
                     if (appReady) {
                         WoWNoteApp(
                             launchRequest = launchRequest,
-                            onLaunchConsumed = { launchRequest = LaunchRequest() }
-                        )
-
-                        ThemeFloatingButton(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .statusBarsPadding()
-                                .padding(top = 8.dp, end = 14.dp),
-                            onClick = { showThemes = true }
+                            onLaunchConsumed = { launchRequest = LaunchRequest() },
+                            onThemeClick = { showThemes = true }
                         )
                     } else {
                         StartupScreen()

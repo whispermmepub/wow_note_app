@@ -15,26 +15,75 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import android.widget.OverScroller
 import androidx.core.content.getSystemService
 import androidx.core.widget.doAfterTextChanged
 import java.io.File
+import kotlin.math.roundToInt
 
 class RichEditText(context: Context) : EditText(context) {
 
     var onRichTextChanged: ((plain: String, richJson: String) -> Unit)? = null
+    var onEditModeChanged: ((Boolean) -> Unit)? = null
+
     private var editMode = false
-    private var suppressNextAutoFocus = false
+    private val readScroller = OverScroller(context)
 
     private val gestures = GestureDetector(
         context,
         object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onDown(e: MotionEvent): Boolean {
+                if (!readScroller.isFinished) readScroller.forceFinished(true)
+                return true
+            }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                suppressNextAutoFocus = false
-                enterEditMode(showKeyboard = true)
-                val offset = getOffsetForPosition(e.x, e.y).coerceIn(0, editableText.length)
+                if (editMode) return false
+                val offset = runCatching { getOffsetForPosition(e.x, e.y) }
+                    .getOrDefault(0)
+                    .coerceIn(0, editableText.length)
+                enterEditMode(showKeyboard = false)
                 setSelection(offset)
+                focusAndShowKeyboard()
+                return true
+            }
+
+            override fun onScroll(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                distanceX: Float,
+                distanceY: Float
+            ): Boolean {
+                if (editMode) return false
+                val maxY = maximumScrollY()
+                if (maxY <= 0) return true
+                val nextY = (scrollY + distanceY * READ_SCROLL_MULTIPLIER)
+                    .roundToInt()
+                    .coerceIn(0, maxY)
+                scrollTo(0, nextY)
+                return true
+            }
+
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean {
+                if (editMode) return false
+                val maxY = maximumScrollY()
+                if (maxY <= 0) return true
+                readScroller.fling(
+                    0,
+                    scrollY,
+                    0,
+                    (-velocityY * READ_FLING_MULTIPLIER).roundToInt(),
+                    0,
+                    0,
+                    0,
+                    maxY
+                )
+                postInvalidateOnAnimation()
                 return true
             }
         }
@@ -50,7 +99,10 @@ class RichEditText(context: Context) : EditText(context) {
         setLineSpacing(0f, 1.28f)
         textSize = 18f
         hint = "Start writing…"
-        isVerticalScrollBarEnabled = false
+        isVerticalScrollBarEnabled = true
+        scrollBarStyle = SCROLLBARS_INSIDE_OVERLAY
+        overScrollMode = OVER_SCROLL_IF_CONTENT_SCROLLS
+        setHorizontallyScrolling(false)
 
         doAfterTextChanged {
             if (!editMode) return@doAfterTextChanged
@@ -62,20 +114,32 @@ class RichEditText(context: Context) : EditText(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (!editMode) gestures.onTouchEvent(event)
+        if (!editMode) {
+            gestures.onTouchEvent(event)
+            return true
+        }
         return super.onTouchEvent(event)
     }
 
+    override fun computeScroll() {
+        if (readScroller.computeScrollOffset()) {
+            scrollTo(readScroller.currX, readScroller.currY.coerceIn(0, maximumScrollY()))
+            postInvalidateOnAnimation()
+        }
+    }
+
     fun loadRichText(json: String, fallback: String, sizeSp: Float, fontPath: String?) {
-        val restoreEditing = editMode
         editMode = false
         textSize = sizeSp
         setNoteTypeface(fontPath)
         val restored = RichTextCodec.decode(json, fallback)
         setText(restored)
-        setSelection(restored.length)
-        suppressNextAutoFocus = restored.isNotBlank() || json.isNotBlank()
-        if (restoreEditing) enterEditMode(showKeyboard = false) else enterReadMode()
+        setSelection(0)
+        enterReadMode()
+        post {
+            setSelection(0)
+            scrollTo(0, 0)
+        }
     }
 
     fun setNoteTypeface(fontPath: String?) {
@@ -87,6 +151,29 @@ class RichEditText(context: Context) : EditText(context) {
         }
     }
 
+    fun isEditing(): Boolean = editMode
+
+    fun moveCursorToEnd() {
+        val end = editableText.length
+        setSelection(end)
+        post { bringPointIntoView(end) }
+    }
+
+    fun beginEditingAtVisiblePosition() {
+        val currentLayout = layout
+        val targetOffset = if (currentLayout != null && currentLayout.lineCount > 0) {
+            val vertical = (scrollY + (height * 0.30f)).roundToInt()
+                .coerceIn(0, currentLayout.height.coerceAtLeast(0))
+            val line = currentLayout.getLineForVertical(vertical)
+            currentLayout.getLineStart(line).coerceIn(0, editableText.length)
+        } else {
+            0
+        }
+        enterEditMode(showKeyboard = false)
+        setSelection(targetOffset)
+        focusAndShowKeyboard()
+    }
+
     fun selectedText(): String {
         val start = minOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
         val end = maxOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
@@ -94,7 +181,6 @@ class RichEditText(context: Context) : EditText(context) {
     }
 
     fun insertAtCursor(value: String) {
-        suppressNextAutoFocus = false
         enterEditMode(showKeyboard = false)
         val start = minOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
         val end = maxOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
@@ -104,7 +190,6 @@ class RichEditText(context: Context) : EditText(context) {
     }
 
     fun replaceSelectionOrAll(value: String) {
-        suppressNextAutoFocus = false
         enterEditMode(showKeyboard = false)
         val start = minOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
         val end = maxOf(selectionStart.coerceAtLeast(0), selectionEnd.coerceAtLeast(0))
@@ -118,11 +203,17 @@ class RichEditText(context: Context) : EditText(context) {
         emitChange()
     }
 
-    fun toggleBold() { suppressNextAutoFocus = false; enterEditMode(false); toggleStyle(Typeface.BOLD) }
-    fun toggleItalic() { suppressNextAutoFocus = false; enterEditMode(false); toggleStyle(Typeface.ITALIC) }
+    fun toggleBold() {
+        enterEditMode(false)
+        toggleStyle(Typeface.BOLD)
+    }
+
+    fun toggleItalic() {
+        enterEditMode(false)
+        toggleStyle(Typeface.ITALIC)
+    }
 
     fun toggleUnderline() {
-        suppressNextAutoFocus = false
         enterEditMode(false)
         val (start, end) = selectedOrWordRange()
         if (end <= start) return
@@ -133,7 +224,6 @@ class RichEditText(context: Context) : EditText(context) {
     }
 
     fun setSelectionSizeSp(sizeSp: Int) {
-        suppressNextAutoFocus = false
         enterEditMode(false)
         val (start, end) = selectedOrWordRange()
         if (end <= start) {
@@ -150,11 +240,23 @@ class RichEditText(context: Context) : EditText(context) {
         emitChange()
     }
 
-    fun alignLeft() { suppressNextAutoFocus = false; enterEditMode(false); setParagraphAlignment(Layout.Alignment.ALIGN_NORMAL) }
-    fun alignCenter() { suppressNextAutoFocus = false; enterEditMode(false); setParagraphAlignment(Layout.Alignment.ALIGN_CENTER) }
-    fun alignRight() { suppressNextAutoFocus = false; enterEditMode(false); setParagraphAlignment(Layout.Alignment.ALIGN_OPPOSITE) }
+    fun alignLeft() {
+        enterEditMode(false)
+        setParagraphAlignment(Layout.Alignment.ALIGN_NORMAL)
+    }
+
+    fun alignCenter() {
+        enterEditMode(false)
+        setParagraphAlignment(Layout.Alignment.ALIGN_CENTER)
+    }
+
+    fun alignRight() {
+        enterEditMode(false)
+        setParagraphAlignment(Layout.Alignment.ALIGN_OPPOSITE)
+    }
 
     fun enterReadMode() {
+        val changed = editMode
         editMode = false
         isCursorVisible = false
         isFocusable = false
@@ -162,34 +264,33 @@ class RichEditText(context: Context) : EditText(context) {
         showSoftInputOnFocus = false
         clearFocus()
         context.getSystemService<InputMethodManager>()?.hideSoftInputFromWindow(windowToken, 0)
+        if (changed) onEditModeChanged?.invoke(false)
     }
 
     fun enterEditMode(showKeyboard: Boolean = true) {
-        suppressNextAutoFocus = false
+        val changed = !editMode
         editMode = true
         isFocusable = true
         isFocusableInTouchMode = true
         isCursorVisible = true
         showSoftInputOnFocus = true
+        if (changed) onEditModeChanged?.invoke(true)
         if (showKeyboard) focusAndShowKeyboard()
     }
 
     fun focusAndShowKeyboard() {
-        if (suppressNextAutoFocus) {
-            suppressNextAutoFocus = false
-            enterReadMode()
-            return
-        }
-        editMode = true
-        isFocusable = true
-        isFocusableInTouchMode = true
-        isCursorVisible = true
-        showSoftInputOnFocus = true
+        enterEditMode(showKeyboard = false)
         requestFocus()
         post {
             context.getSystemService<InputMethodManager>()
                 ?.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
         }
+    }
+
+    private fun maximumScrollY(): Int {
+        val currentLayout = layout ?: return 0
+        val viewport = (height - compoundPaddingTop - compoundPaddingBottom).coerceAtLeast(0)
+        return (currentLayout.height - viewport).coerceAtLeast(0)
     }
 
     private fun toggleStyle(style: Int) {
@@ -206,7 +307,12 @@ class RichEditText(context: Context) : EditText(context) {
         val (start, end) = paragraphRange()
         if (end <= start) return
         editableText.getSpans(start, end, AlignmentSpan::class.java).forEach(editableText::removeSpan)
-        editableText.setSpan(AlignmentSpan.Standard(alignment), start, end, Spanned.SPAN_PARAGRAPH)
+        editableText.setSpan(
+            AlignmentSpan.Standard(alignment),
+            start,
+            end,
+            Spanned.SPAN_PARAGRAPH
+        )
         emitChange()
     }
 
@@ -216,6 +322,7 @@ class RichEditText(context: Context) : EditText(context) {
         val start = minOf(rawStart, rawEnd)
         val end = maxOf(rawStart, rawEnd)
         if (start != end) return start to end
+
         val text = editableText
         var left = start
         var right = start
@@ -238,5 +345,10 @@ class RichEditText(context: Context) : EditText(context) {
         val e = editableText ?: return
         onRichTextChanged?.invoke(e.toString(), RichTextCodec.encode(e))
         invalidate()
+    }
+
+    companion object {
+        private const val READ_SCROLL_MULTIPLIER = 2.35f
+        private const val READ_FLING_MULTIPLIER = 1.45f
     }
 }
