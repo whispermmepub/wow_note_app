@@ -1,0 +1,31 @@
+name: Apply UX Cleanup
+
+on:
+  push:
+    paths:
+      - scripts/apply_ux_cleanup.py
+      - .github/workflows/ux-cleanup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply UX cleanup patch
+        run: python scripts/apply_ux_cleanup.py
+      - name: Commit UX cleanup
+        run: |
+          if git diff --quiet; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git config user.name "WoW Note Builder"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/src/main/java/com/whispermmepub/wownote/MainActivity.kt app/src/main/java/com/whispermmepub/wownote/WoWNoteApp.kt app/src/main/java/com/whispermmepub/wownote/editor/RichEditText.kt app/build.gradle.kts
+          git commit -m "Polish editor calendar theme and back behavior"
+          git push origin main
