@@ -16,6 +16,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Repair patch script syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/apply_ux_cleanup.py')
+          t = p.read_text(encoding='utf-8')
+          t = t.replace(
+              "'backgroundColor = if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),'\n    1",
+              "'backgroundColor = if (isToday) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),',\n    1"
+          )
+          t = t.replace(
+              "'color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface'\n    1",
+              "'color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface',\n    1"
+          )
+          p.write_text(t, encoding='utf-8')
+          PY
       - name: Apply UX cleanup patch
         run: python scripts/apply_ux_cleanup.py
       - name: Commit UX cleanup
